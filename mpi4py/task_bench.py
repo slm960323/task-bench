@@ -36,8 +36,7 @@ def execute_task_graph(graph):
 
     scratch_bytes = graph.scratch_bytes_per_task
     rank_by_point, tag_bits_by_point = gen_rank_point_map(graph)
-    send_requests = []
-    recv_requests = []
+    requests = []
     n_deps_map = {}
 
 
@@ -61,12 +60,8 @@ def execute_task_graph(graph):
     ## Create inputs
     input_bytes_per_task = graph.output_bytes_per_task
     inputs = [0] * n_points
-    # for i in range(n_points):
-    #     for j in range(max_deps):
-    #         inputs[i][j] = np.zeros(input_bytes_per_task, dtype=np.ubyte)
 
     outputs = [np.zeros(input_bytes_per_task, dtype=np.ubyte)] * n_points
-    point_input_bytes = [[input_bytes_per_task] * max_deps] * n_points
 
     ## Generate dependency and reverse_dependency maps
     dependencies = [None] * core.c.task_graph_max_dependence_sets(graph)
@@ -126,61 +121,36 @@ def execute_task_graph(graph):
                         p_to = tag_bits_by_point[dep]
                         tag = (p_from << 8) | p_to
                         # print("\t\tSend:: from = {}; to = {};  dest = {}; tag = {}; data = {}".format(p_from, p_to, rank_by_point[dep], tag, outputs[point_index]))
-                        req = comm.isend(outputs[point_index], dest=rank_by_point[dep], tag=tag)
-                        send_requests.append(req)
-                        # req.wait()
+                        req = comm.Isend(outputs[point_index], dest=rank_by_point[dep], tag=tag)
+                        requests.append(req)
 
 
             # Receive
-            point_n_inputs = 0
             if (point >= offset and point < offset + width):
                 for i in range(0, core.c.interval_list_num_intervals(point_deps)):
                     interval = core.c.interval_list_interval(point_deps, i)
-                    # print("Point {} deps_interval: ({}, {})".format(point, interval.start, interval.end))
+
                     for dep in range(interval.start, interval.end + 1):
-                        point_n_inputs = dep - interval.start
-                        # inputs[point_index].append()
-                        # print("\tpoint {} dep = {} ".format(point, dep))
                         if (dep < last_offset or dep >= last_offset + last_width):
-                            # print("\t\tcontinue")
                             continue
 
                         if (first_point <= dep and dep <= last_point):
-                            # point_n_inputs = dep - interval.start
                             output = outputs[dep - first_point]
                             inputs[point_index].append(np.copy(output))
-                            # print("\t\trecv point_index = {}; point_n_inputs = {}; data {}\n\t\tinputs[{}] = {}".format(point_index, point_n_inputs, output, point_n_inputs, inputs[point_index]))
-                            # print("Recv:: point_index = {}; point_n_inputs = {}; output = {}".format(point_index, point_n_inputs, output))
+
                         else:
                             p_from = tag_bits_by_point[dep]
                             p_to = tag_bits_by_point[point]
                             tag = (p_from << 8) | p_to
-                            # print("\t\trecv:: from = {}; to = {}; tag = {}; source {}".format(p_from, p_to, tag, rank_by_point[dep]))
-                            # data = np.zeros(input_bytes_per_task, dtype=np.ubyte)
-                            req = comm.irecv(source=rank_by_point[dep], tag=tag)
-                            # recv_requests.append(req)
-                            # req.wait()
-                            # data = req.wait()
-                            inputs[point_index].append(req.wait())
-                            # print("\t\t\tRecv:: inputs[{}][{}] = {}".format(point_index, point_n_inputs ,inputs[point_index][point_n_inputs]))
+                            inputs[point_index].append(np.empty(input_bytes_per_task, dtype=np.ubyte))
+                            req = comm.Irecv([inputs[point_index][-1], MPI.BYTE], source=rank_by_point[dep], tag=tag)
+                            requests.append(req)
 
 
-            # for i in inputs:
-            #     print("@@@ inputs = {}".format(i))
+        status = [MPI.Status() for i in range(len(requests))]
+        MPI.Request.Waitall(requests, status)
+        requests = []
 
-        # print("Len requests = {}".format(len(requests)))
-        # status = [MPI.Status() for i in range(len(send_requests))]
-
-        # MPI.Request.Waitall(send_requests, status)
-
-        # status = [MPI.Status() for i in range(len(recv_requests))]
-
-        # for s in status:
-        #     print("status:: ", s.Get_elements(MPI.BYTE))
-
-        # MPI.Request.Waitall(recv_requests, status)
-        send_requests = []
-        recv_requests = []
         comm.Barrier()
 
         #print("n_deps_map = {}".format(n_deps_map))
