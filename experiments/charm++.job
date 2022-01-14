@@ -1,0 +1,36 @@
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --ntasks=2
+#SBATCH --cpus-per-task=32
+#SBATCH --constraint=haswell 
+#SBATCH -A xpress
+#SBATCH --time=00:30:00
+#SBATCH --job-name=charm++-mpi-1node-%j
+#SBATCH --output=logs/job/charm++-mpi-1node-%j.txt
+#SBATCH --error=logs/job/error-%j.txt
+
+date
+
+module swap PrgEnv-intel PrgEnv-gnu
+module load cmake/3.21.3
+
+
+export MPICH_MAX_THREAD_SAFETY=multiple
+
+for rn in {1..5..1}
+do
+        for i in {6..24..3}
+        do
+                it=$((2 ** $i))
+                echo "using iter: "
+                echo ${it}
+                cd /global/cscratch1/sd/nmiao/task-bench/src/task-bench/charm++
+                srun --cpu_bind cores ./benchmark -type stencil_1d  -width 64 -steps 1000 -kernel compute_bound -iter ${it}
+                echo "done iter =====================================  "
+                date
+        done
+done
+
+echo "complete all runs"
+date
